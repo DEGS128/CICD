@@ -18,21 +18,16 @@ jobs:
           php-version: '8.1'
           coverage: none
 
-      - name: Validate composer.json (root)
+      - name: Validate and install Composer dependencies
         run: |
-          if [ -f composer.json ]; then composer validate --no-check-publish; fi
-
-      - name: Validate composer.json (hospital-HR4)
-        run: |
-          if [ -f hospital-HR4/composer.json ]; then cd hospital-HR4 && composer validate --no-check-publish; fi
-
-      - name: Install Composer dependencies (root)
-        run: |
-          if [ -f composer.json ]; then composer install --no-interaction --no-progress --prefer-dist; fi
-
-      - name: Install Composer dependencies (hospital-HR4)
-        run: |
-          if [ -f hospital-HR4/composer.json ]; then cd hospital-HR4 && composer install --no-interaction --no-progress --prefer-dist; fi
+          for dir in . hospital-HR4; do
+            if [ -f "$dir/composer.json" ]; then
+              cd "$dir"
+              composer validate --no-check-publish
+              composer install --no-interaction --no-progress --prefer-dist
+              cd -
+            fi
+          done
 
       - name: PHP syntax check (lint)
         run: |
@@ -55,6 +50,7 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           server-dir: ${{ secrets.FTP_DIR }}
           local-dir: ./
+          passive: true
           dangerous-clean-slate: false
           exclude: |
             **/.git*
