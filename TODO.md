@@ -1,0 +1,10 @@
+- [ ] Update the <style> section in index.php with the new custom CSS from loginn (1).html
+- [ ] Modify the body tag classes to match the new design (hvh-bg, flex, etc.)
+- [ ] Add the multi-logo layer div comment and element
+- [ ] Update the main container to include relative z-[3]
+- [ ] Change the form panel background to bg-slate-100
+- [ ] Change the logo panel background to bg-slate-300
+- [ ] Update logo image sources to the provided URL
+- [ ] Remove the Clear button from the form
+- [ ] Ensure all form IDs and structure match for JavaScript compatibility
+- [ ] Test login functionality after changes

@@ -1,0 +1,1691 @@
+/**
+ * HR Management System - Frontend JavaScript
+ * Handles Core HR, Time & Attendance, Payroll (Salaries) sections functionality.
+ * Version: 1.3 (Add Payroll-Salaries)
+ */
+
+document.addEventListener('DOMContentLoaded', () => {
+    // --- Configuration ---
+    const API_BASE_URL = 'php/api/'; // Adjust if your api folder is elsewhere
+    const DOCUMENTS_UPLOAD_DIR = 'uploads/documents/'; // Base path for linking files
+
+    // --- DOM Elements ---
+    const mainContentArea = document.getElementById('main-content-area');
+    const pageTitleElement = document.getElementById('page-title');
+
+    // Modal Elements (ensure these IDs exist in index.html)
+    const timesheetModal = document.getElementById('timesheet-detail-modal');
+    const modalOverlay = document.getElementById('modal-overlay');
+    const modalCloseBtn = document.getElementById('modal-close-btn');
+    const modalTimesheetId = document.getElementById('modal-timesheet-id');
+    const modalEmployeeName = document.getElementById('modal-employee-name');
+    const modalEmployeeJob = document.getElementById('modal-employee-job');
+    const modalPeriodStart = document.getElementById('modal-period-start');
+    const modalPeriodEnd = document.getElementById('modal-period-end');
+    const modalStatus = document.getElementById('modal-status');
+    const modalTotalHours = document.getElementById('modal-total-hours');
+    const modalOvertimeHours = document.getElementById('modal-overtime-hours');
+    const modalSubmittedDate = document.getElementById('modal-submitted-date');
+    const modalApproverName = document.getElementById('modal-approver-name');
+    const modalAttendanceEntries = document.getElementById('modal-attendance-entries');
+
+
+    // --- Sidebar Links (Ensure corresponding IDs exist in HTML) ---
+    const employeesLink = document.getElementById('employees-link');
+    const documentsLink = document.getElementById('documents-link');
+    const orgStructureLink = document.getElementById('org-structure-link');
+    const shiftsLink = document.getElementById('shifts-link');
+    const schedulesLink = document.getElementById('schedules-link');
+    const attendanceLink = document.getElementById('attendance-link');
+    const timesheetsLink = document.getElementById('timesheets-link');
+    // *** Add selector for Salaries link ***
+    const salariesLink = document.getElementById('salaries-link'); // Example ID needed in HTML
+    // Add selectors for other Payroll links (Bonuses, Deductions, Runs) later...
+
+    // --- Error Handling for Missing Core Elements ---
+    if (!mainContentArea || !pageTitleElement) {
+        console.error("CRITICAL: Essential DOM elements (main-content-area or page-title) not found!");
+        alert("Error: Could not initialize page layout. Please contact support.");
+        return; // Stop execution if core elements are missing
+    }
+     // Check if modal elements exist (warn but don't stop)
+    if (!timesheetModal || !modalOverlay || !modalCloseBtn) {
+        console.warn("Timesheet modal elements not found in HTML. View details functionality will be limited.");
+    } else {
+         // Add Event Listener for Modal Close Button & Overlay
+         modalCloseBtn.addEventListener('click', closeTimesheetModal);
+         modalOverlay.addEventListener('click', closeTimesheetModal); // Close on overlay click
+    }
+
+
+    // --- Event Listeners for Sidebar ---
+    // Helper to prevent adding listeners multiple times if script re-runs
+    const addClickListenerOnce = (element, handler) => {
+        if (element && !element.hasAttribute('data-listener-added')) {
+            element.addEventListener('click', handler);
+            element.setAttribute('data-listener-added', 'true');
+             // console.log(`Listener added for: ${element.id || element.href}`); // Debug log
+        } else if (!element) {
+            // console.warn(`Sidebar link element not found for handler: ${handler.name}`);
+        }
+    };
+
+    addClickListenerOnce(employeesLink, (e) => { e.preventDefault(); displayEmployeeSection(); });
+    addClickListenerOnce(documentsLink, (e) => { e.preventDefault(); displayDocumentsSection(); });
+    addClickListenerOnce(orgStructureLink, (e) => { e.preventDefault(); displayOrgStructureSection(); });
+    addClickListenerOnce(shiftsLink, (e) => { e.preventDefault(); displayShiftsSection(); });
+    addClickListenerOnce(schedulesLink, (e) => { e.preventDefault(); displaySchedulesSection(); });
+    addClickListenerOnce(attendanceLink, (e) => { e.preventDefault(); displayAttendanceSection(); });
+    addClickListenerOnce(timesheetsLink, (e) => { e.preventDefault(); displayTimesheetsSection(); });
+    // *** Add listener for Salaries Link ***
+    addClickListenerOnce(salariesLink, (e) => { e.preventDefault(); displaySalariesSection(); });
+
+    // Add listeners for other modules here...
+
+
+    // ========================================================================
+    // SHARED HELPER FUNCTIONS
+    // ========================================================================
+
+    // --- Function to Populate Employee Select Dropdown ---
+    async function populateEmployeeDropdown(selectElementId, includeAllOption = false) {
+        // console.log(`[populateEmployeeDropdown] Attempting to populate dropdown with ID: '${selectElementId}'`);
+        const selectElement = document.getElementById(selectElementId);
+        if (!selectElement) {
+            console.error(`[populateEmployeeDropdown] Element with ID '${selectElementId}' NOT FOUND in the DOM.`);
+            return;
+        }
+        // console.log(`[populateEmployeeDropdown] Found element '${selectElementId}':`, selectElement);
+        const currentOptions = Array.from(selectElement.options).map(opt => ({ value: opt.value, text: opt.textContent }));
+        // console.log(`[populateEmployeeDropdown] Current options for '${selectElementId}':`, currentOptions);
+        selectElement.innerHTML = '';
+        let placeholderOption = document.createElement('option');
+        if (includeAllOption) {
+            placeholderOption.value = "";
+            placeholderOption.textContent = "All Employees";
+        } else {
+            placeholderOption.value = "";
+            placeholderOption.textContent = "-- Select Employee --";
+            placeholderOption.disabled = !includeAllOption;
+            placeholderOption.selected = true;
+        }
+        selectElement.appendChild(placeholderOption);
+        // console.log(`[populateEmployeeDropdown] Added placeholder for '${selectElementId}':`, placeholderOption);
+        try {
+            const apiUrl = `${API_BASE_URL}get_employees.php`;
+            // console.log(`[populateEmployeeDropdown] Fetching employees from: ${apiUrl} for '${selectElementId}'`);
+            const response = await fetch(apiUrl);
+            const responseText = await response.text();
+            // console.log(`[populateEmployeeDropdown] Raw response status for '${selectElementId}': ${response.status}`);
+            if (!response.ok) { throw new Error(`HTTP error! status: ${response.status}, Response: ${responseText.substring(0, 500)}...`); }
+            const employees = JSON.parse(responseText);
+            // console.log(`[populateEmployeeDropdown] Parsed employees for '${selectElementId}':`, employees);
+            if (employees.error) {
+                console.error(`[populateEmployeeDropdown] API returned error for '${selectElementId}':`, employees.error);
+                placeholderOption.textContent = 'Error loading!';
+            } else if (!Array.isArray(employees)) {
+                 console.error(`[populateEmployeeDropdown] API response for '${selectElementId}' is not an array:`, employees);
+                 placeholderOption.textContent = 'Invalid data!';
+            } else if (employees.length === 0) {
+                console.warn(`[populateEmployeeDropdown] No employees found for '${selectElementId}'.`);
+                placeholderOption.textContent = 'No employees available';
+                placeholderOption.disabled = true;
+            } else {
+                // console.log(`[populateEmployeeDropdown] Populating ${employees.length} employees into '${selectElementId}'...`);
+                employees.forEach(emp => {
+                    const option = document.createElement('option');
+                    option.value = emp.EmployeeID;
+                    option.textContent = `${emp.FirstName} ${emp.LastName} (ID: ${emp.EmployeeID})`;
+                    selectElement.appendChild(option);
+                });
+                // console.log(`[populateEmployeeDropdown] Finished populating '${selectElementId}'.`);
+            }
+        } catch (error) {
+            console.error(`[populateEmployeeDropdown] Error during fetch or processing for '${selectElementId}':`, error);
+            placeholderOption.textContent = 'Error loading!';
+        }
+    }
+
+    // --- Function to Populate Shift Select Dropdown ---
+    async function populateShiftDropdown(selectElementId) {
+        const selectElement = document.getElementById(selectElementId);
+        if (!selectElement) {
+             console.error(`[populateShiftDropdown] Element with ID '${selectElementId}' NOT FOUND.`);
+             return;
+        }
+        const defaultOptionValue = selectElement.options[0]?.value;
+        const defaultOptionText = selectElement.options[0]?.textContent;
+        selectElement.innerHTML = '';
+        if (defaultOptionValue !== undefined && defaultOptionText !== undefined) {
+            const defaultOpt = document.createElement('option');
+            defaultOpt.value = defaultOptionValue; defaultOpt.textContent = defaultOptionText;
+            selectElement.appendChild(defaultOpt);
+        }
+        try {
+            const response = await fetch(`${API_BASE_URL}get_shifts.php`);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const shifts = await response.json();
+            if (shifts.error) { console.error("Error fetching shifts for dropdown:", shifts.error); }
+            else {
+                shifts.forEach(shift => {
+                    const option = document.createElement('option');
+                    option.value = shift.ShiftID;
+                    const startTime = shift.StartTimeFormatted || shift.StartTime;
+                    const endTime = shift.EndTimeFormatted || shift.EndTime;
+                    option.textContent = `${shift.ShiftName} (${startTime} - ${endTime})`;
+                    selectElement.appendChild(option);
+                });
+            }
+        } catch (error) {
+            console.error('Error populating shift dropdown:', error);
+            const errorOption = document.createElement('option');
+            errorOption.textContent = "Error loading shifts"; errorOption.disabled = true;
+            selectElement.appendChild(errorOption);
+        }
+    }
+
+
+    // ========================================================================
+    // CORE HR SECTION FUNCTIONS
+    // ========================================================================
+    // (Implementations for Employees, Documents, Org Structure)
+
+    // --- Function to Display Employee Section ---
+    async function displayEmployeeSection() {
+        console.log("[Display] Displaying Employee Section...");
+        if (!pageTitleElement || !mainContentArea) return;
+        pageTitleElement.textContent = 'Employees';
+        mainContentArea.innerHTML = `
+            <div class="bg-white p-6 rounded-lg shadow-md border border-[#F7E6CA]">
+                 <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Employee List</h3>
+                <div id="employee-list-container" class="overflow-x-auto">Loading employees...</div>
+            </div>`;
+        await loadEmployees();
+    }
+
+    // --- Function to Load Employees ---
+    async function loadEmployees() {
+        console.log("[Load] Loading Employees...");
+        const container = document.getElementById('employee-list-container');
+        if (!container) {
+             console.error("Employee list container not found!");
+             if(mainContentArea) mainContentArea.innerHTML = '<p class="text-red-500">Error displaying employee list container.</p>';
+             return;
+        };
+        container.innerHTML = '<p class="text-center py-4">Loading employees...</p>';
+        try {
+            const response = await fetch(`${API_BASE_URL}get_employees.php`);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const employees = await response.json();
+            if (employees.error) {
+                 console.error("[loadEmployees] API returned error:", employees.error);
+                 container.innerHTML = `<p class="text-red-500 text-center py-4">Error: ${employees.error}</p>`;
+            } else {
+                 renderEmployeeTable(employees);
+            }
+        } catch (error) {
+            console.error('[loadEmployees] Error loading employees:', error);
+            container.innerHTML = `<p class="text-red-500 text-center py-4">Could not load employee data. ${error.message}</p>`;
+        }
+    }
+
+     // --- Function to Render Employee Table ---
+    function renderEmployeeTable(employees) {
+        console.log("[Render] Rendering Employee Table...");
+        const container = document.getElementById('employee-list-container');
+        if (!container) return;
+        if (!employees || employees.length === 0) {
+            container.innerHTML = '<p class="text-center py-4 text-gray-500">No employees found.</p>';
+            return;
+        }
+        let tableHtml = `
+            <table class="min-w-full divide-y divide-gray-200 border border-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Title</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">`;
+        employees.forEach(emp => {
+            tableHtml += `
+                <tr id="emp-row-${emp.EmployeeID}">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${emp.EmployeeID}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${emp.FirstName} ${emp.LastName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${emp.JobTitle || '<span class="text-gray-400 italic">N/A</span>'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${emp.Email || '<span class="text-gray-400 italic">N/A</span>'}</td>
+                </tr>`;
+        });
+        tableHtml += `</tbody></table>`;
+        container.innerHTML = tableHtml;
+    }
+
+
+    // --- Function to Display Documents Section ---
+    async function displayDocumentsSection() {
+        console.log("[Display] Displaying Documents Section...");
+        if (!pageTitleElement || !mainContentArea) return;
+        pageTitleElement.textContent = 'Employee Documents';
+        mainContentArea.innerHTML = `
+            <div class="bg-white p-6 rounded-lg shadow-md border border-[#F7E6CA] space-y-6">
+                <div class="border-b border-gray-200 pb-4">
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Upload New Document</h3>
+                    <form id="upload-document-form" class="space-y-4">
+                        <div>
+                            <label for="employee-select" class="block text-sm font-medium text-gray-700 mb-1">Employee:</label>
+                            <select id="employee-select" name="employee_id" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                <option value="">Loading employees...</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="document-type" class="block text-sm font-medium text-gray-700 mb-1">Document Type:</label>
+                            <input type="text" id="document-type" name="document_type" required placeholder="e.g., Contract, ID, Certificate" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                        </div>
+                        <div>
+                            <label for="document-file" class="block text-sm font-medium text-gray-700 mb-1">File:</label>
+                            <input type="file" id="document-file" name="document_file" required class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-[#F7E6CA] file:text-[#4E3B2A] hover:file:bg-[#EADDC8]">
+                            <p class="text-xs text-gray-500 mt-1">Allowed types: PDF, DOC, DOCX, JPG, PNG. Max size: 5MB.</p>
+                        </div>
+                        <div>
+                            <button type="submit" class="px-4 py-2 bg-[#594423] text-white rounded-md hover:bg-[#4E3B2A] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#594423] transition duration-150 ease-in-out">
+                                Upload Document
+                            </button>
+                        </div>
+                         <div id="upload-status" class="mt-2 text-sm"></div>
+                    </form>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Existing Documents</h3>
+                    <div id="document-list-container" class="overflow-x-auto">
+                        <p>Loading documents...</p>
+                    </div>
+                </div>
+            </div>`;
+        requestAnimationFrame(async () => {
+            // console.log("[Display] Documents Section: Attaching listeners and loading data...");
+            await populateEmployeeDropdown('employee-select');
+            const uploadForm = document.getElementById('upload-document-form');
+            if (uploadForm) {
+                if (!uploadForm.hasAttribute('data-listener-attached')) {
+                     // console.log("[Event] Adding submit listener to upload-document-form");
+                     uploadForm.addEventListener('submit', handleDocumentUpload);
+                     uploadForm.setAttribute('data-listener-attached', 'true');
+                }
+            } else { console.error("Upload form not found after injecting HTML."); }
+            const docListContainer = document.getElementById('document-list-container');
+            if (docListContainer) {
+                 if (!docListContainer.hasAttribute('data-listener-attached')) {
+                     // console.log("[Event] Adding click listener to document-list-container");
+                     docListContainer.addEventListener('click', handleDocumentDelete);
+                     docListContainer.setAttribute('data-listener-attached', 'true');
+                 }
+            } else { console.error("Document list container not found after injecting HTML."); }
+            await loadDocuments();
+        });
+    }
+
+    // --- Function to Load Documents ---
+    async function loadDocuments(employeeId = null) {
+        // console.log(`[Load] Loading Documents... Employee Filter: ${employeeId || 'None'}`);
+        const container = document.getElementById('document-list-container');
+        if (!container) { console.error("Document list container not found!"); return; }
+        container.innerHTML = '<p class="text-center py-4">Loading documents...</p>';
+        let url = `${API_BASE_URL}get_documents.php`;
+        if (employeeId) { url += `?employee_id=${encodeURIComponent(employeeId)}`; }
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const documents = await response.json();
+            if (documents.error) {
+                console.error("Error fetching documents:", documents.error);
+                container.innerHTML = `<p class="text-red-500 text-center py-4">Error: ${documents.error}</p>`;
+            } else { renderDocumentTable(documents); }
+        } catch (error) {
+            console.error('Error loading documents:', error);
+            container.innerHTML = `<p class="text-red-500 text-center py-4">Could not load documents. ${error.message}</p>`;
+        }
+    }
+
+    // --- Function to Render Document Table ---
+    function renderDocumentTable(documents) {
+        // console.log(`[Render] Rendering Document Table with ${documents?.length || 0} items...`);
+        const container = document.getElementById('document-list-container');
+        if (!container) return;
+        if (!documents || documents.length === 0) {
+            container.innerHTML = '<p class="text-center py-4 text-gray-500">No documents found.</p>';
+            return;
+        }
+        let tableHtml = `
+            <table class="min-w-full divide-y divide-gray-200 border border-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Document Type</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Filename</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Uploaded</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">`;
+        documents.forEach(doc => {
+            const uploadDate = new Date(doc.UploadDate).toLocaleDateString('en-CA');
+            const filePath = doc.FilePath ? `${doc.FilePath}` : '#';
+            const canDownload = doc.FilePath ? '' : 'disabled title="File path missing"';
+            const downloadTarget = doc.FilePath ? '_blank' : '_self';
+            tableHtml += `
+                <tr id="doc-row-${doc.DocumentID}">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${doc.EmployeeName} (ID: ${doc.EmployeeID})</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${doc.DocumentType}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${doc.DocumentName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${uploadDate}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium space-x-2">
+                        <a href="${filePath}" target="${downloadTarget}" ${canDownload} class="text-blue-600 hover:text-blue-800 ${!doc.FilePath ? 'opacity-50 cursor-not-allowed' : ''}" title="Download/View">
+                           <i class="fas fa-download"></i> View
+                        </a>
+                        <button data-document-id="${doc.DocumentID}" class="text-red-600 hover:text-red-800 delete-doc-btn" title="Delete">
+                           <i class="fas fa-trash-alt"></i> Delete
+                        </button>
+                    </td>
+                </tr>`;
+        });
+        tableHtml += `</tbody></table>`;
+        container.innerHTML = tableHtml;
+    }
+
+    // --- Function to Handle Document Upload ---
+    async function handleDocumentUpload(event) {
+        event.preventDefault();
+        // console.log("[Action] Handling Document Upload...");
+        const form = event.target;
+        const statusDiv = document.getElementById('upload-status');
+        const submitButton = form.querySelector('button[type="submit"]');
+        if (!form || !statusDiv || !submitButton) { console.error("Upload form elements missing."); return; }
+        const formData = new FormData(form);
+        if (!formData.get('employee_id')) { statusDiv.textContent = 'Please select an employee.'; statusDiv.className = 'mt-2 text-sm text-red-600'; return; }
+        if (!formData.get('document_type').trim()) { statusDiv.textContent = 'Please enter a document type.'; statusDiv.className = 'mt-2 text-sm text-red-600'; return; }
+        const fileInput = document.getElementById('document-file');
+        if (!fileInput || !fileInput.files || fileInput.files.length === 0) { statusDiv.textContent = 'Please select a file to upload.'; statusDiv.className = 'mt-2 text-sm text-red-600'; return; }
+        statusDiv.textContent = 'Uploading...'; statusDiv.className = 'mt-2 text-sm text-blue-600'; submitButton.disabled = true;
+        try {
+            const response = await fetch(`${API_BASE_URL}upload_document.php`, { method: 'POST', body: formData });
+            const result = await response.json();
+            if (!response.ok) { throw new Error(result.error || `HTTP error! status: ${response.status}`); }
+            statusDiv.textContent = result.message || 'Upload successful!'; statusDiv.className = 'mt-2 text-sm text-green-600';
+            form.reset();
+            await loadDocuments(); // Refresh list after upload
+        } catch (error) {
+            console.error('Error uploading document:', error);
+            statusDiv.textContent = `Upload failed: ${error.message}`; statusDiv.className = 'mt-2 text-sm text-red-600';
+        } finally { submitButton.disabled = false; }
+    }
+
+    // --- Function to Handle Document Deletion Click ---
+    function handleDocumentDelete(event) {
+        if (event.target.closest('.delete-doc-btn')) {
+            // console.log("[Action] Delete button clicked");
+            const button = event.target.closest('.delete-doc-btn');
+            const documentId = button.dataset.documentId;
+            if (documentId && confirm(`Are you sure you want to delete document ID ${documentId}? This action cannot be undone.`)) {
+                deleteDocument(documentId);
+            }
+        }
+    }
+
+    // --- Function to Delete Document ---
+    async function deleteDocument(documentId) {
+        // console.log(`[Action] Attempting to delete document ID: ${documentId}`);
+        const statusDiv = document.getElementById('upload-status');
+        try {
+            const response = await fetch(`${API_BASE_URL}delete_document.php`, {
+                method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ document_id: documentId })
+            });
+            const result = await response.json();
+            if (!response.ok) { throw new Error(result.error || `HTTP error! status: ${response.status}`); }
+            console.log('Delete successful:', result.message);
+            if (statusDiv) {
+                statusDiv.textContent = result.message || 'Document deleted successfully.';
+                statusDiv.className = 'mt-2 text-sm text-green-600';
+                setTimeout(() => { if(statusDiv.textContent === (result.message || 'Document deleted successfully.')) statusDiv.textContent = ''; }, 5000);
+            }
+            await loadDocuments(); // Refresh list after delete
+        } catch (error) {
+            console.error('Error deleting document:', error);
+            if (statusDiv) { statusDiv.textContent = `Deletion failed: ${error.message}`; statusDiv.className = 'mt-2 text-sm text-red-600'; }
+        }
+    }
+
+    // --- Function to Display Org Structure Section ---
+    async function displayOrgStructureSection() {
+        console.log("[Display] Displaying Org Structure Section...");
+        if (!pageTitleElement || !mainContentArea) return;
+        pageTitleElement.textContent = 'Organizational Structure';
+        mainContentArea.innerHTML = `
+            <div class="bg-white p-6 rounded-lg shadow-md border border-[#F7E6CA] space-y-6">
+                <div>
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Departments</h3>
+                    <div id="org-structure-container" class="overflow-x-auto">
+                        <p>Loading organizational structure...</p>
+                    </div>
+                </div>
+            </div>`;
+        await loadOrgStructure();
+    }
+
+    // --- Function to Load Org Structure Data ---
+    async function loadOrgStructure() {
+        console.log("[Load] Loading Org Structure...");
+        const container = document.getElementById('org-structure-container');
+        if (!container) return;
+        container.innerHTML = '<p class="text-center py-4">Loading structure...</p>';
+        const url = `${API_BASE_URL}get_org_structure.php`;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const departments = await response.json();
+            if (departments.error) {
+                console.error("Error fetching org structure:", departments.error);
+                container.innerHTML = `<p class="text-red-500 text-center py-4">Error: ${departments.error}</p>`;
+            } else { renderOrgStructureTable(departments); }
+        } catch (error) {
+            console.error('Error loading org structure:', error);
+            container.innerHTML = `<p class="text-red-500 text-center py-4">Could not load organizational structure. ${error.message}</p>`;
+        }
+    }
+
+    // --- Function to Render Org Structure Table ---
+    function renderOrgStructureTable(departments) {
+        console.log("[Render] Rendering Org Structure Table...");
+        const container = document.getElementById('org-structure-container');
+        if (!container) return;
+        if (!departments || departments.length === 0) {
+            container.innerHTML = '<p class="text-center py-4 text-gray-500">No departments found.</p>';
+            return;
+        }
+        let tableHtml = `
+            <table class="min-w-full divide-y divide-gray-200 border border-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dept. ID</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department Name</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Manager</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Parent Dept.</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">`;
+        departments.forEach(dept => {
+            const managerName = dept.ManagerName || '<span class="text-gray-400 italic">N/A</span>';
+            const parentDeptName = dept.ParentDepartmentName || '<span class="text-gray-400 italic">None</span>';
+            tableHtml += `
+                <tr id="dept-row-${dept.DepartmentID}">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${dept.DepartmentID}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${dept.DepartmentName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${dept.Location || '<span class="text-gray-400 italic">N/A</span>'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${managerName} ${dept.ManagerID ? `(ID: ${dept.ManagerID})` : ''}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${parentDeptName} ${dept.ParentDepartmentID ? `(ID: ${dept.ParentDepartmentID})` : ''}</td>
+                </tr>`;
+        });
+        tableHtml += `</tbody></table>`;
+        container.innerHTML = tableHtml;
+    }
+
+
+    // ========================================================================
+    // TIME & ATTENDANCE SECTION FUNCTIONS
+    // ========================================================================
+
+    // --- Function to Display Shifts Section ---
+    async function displayShiftsSection() {
+        console.log("[Display] Displaying Shifts Section...");
+        if (!pageTitleElement || !mainContentArea) return;
+        pageTitleElement.textContent = 'Manage Shifts';
+        mainContentArea.innerHTML = `
+            <div class="bg-white p-6 rounded-lg shadow-md border border-[#F7E6CA] space-y-6">
+                <div class="border-b border-gray-200 pb-4">
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Add New Shift</h3>
+                    <form id="add-shift-form" class="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                        <div>
+                            <label for="shift-name" class="block text-sm font-medium text-gray-700 mb-1">Shift Name:</label>
+                            <input type="text" id="shift-name" name="shift_name" required placeholder="e.g., Day Shift" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                        </div>
+                        <div>
+                            <label for="start-time" class="block text-sm font-medium text-gray-700 mb-1">Start Time:</label>
+                            <input type="time" id="start-time" name="start_time" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                        </div>
+                        <div>
+                            <label for="end-time" class="block text-sm font-medium text-gray-700 mb-1">End Time:</label>
+                            <input type="time" id="end-time" name="end_time" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                        </div>
+                        <div>
+                            <label for="break-duration" class="block text-sm font-medium text-gray-700 mb-1">Break (mins):</label>
+                            <input type="number" id="break-duration" name="break_duration" min="0" placeholder="e.g., 60" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                        </div>
+                        <div class="md:col-span-4">
+                            <button type="submit" class="px-4 py-2 bg-[#594423] text-white rounded-md hover:bg-[#4E3B2A] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#594423] transition duration-150 ease-in-out">
+                                Add Shift
+                            </button>
+                            <span id="add-shift-status" class="ml-4 text-sm"></span>
+                        </div>
+                    </form>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Existing Shifts</h3>
+                    <div id="shifts-list-container" class="overflow-x-auto">
+                        <p>Loading shifts...</p>
+                    </div>
+                </div>
+            </div>`;
+        requestAnimationFrame(async () => {
+            const addShiftForm = document.getElementById('add-shift-form');
+            if (addShiftForm) {
+                 if (!addShiftForm.hasAttribute('data-listener-attached')) {
+                    addShiftForm.addEventListener('submit', handleAddShift);
+                    addShiftForm.setAttribute('data-listener-attached', 'true');
+                 }
+            } else { console.error("Add Shift form not found after injecting HTML."); }
+            await loadShifts();
+        });
+    }
+
+    // --- Function to Load Shifts Data ---
+    async function loadShifts() {
+        console.log("[Load] Loading Shifts...");
+        const container = document.getElementById('shifts-list-container');
+        if (!container) return;
+        container.innerHTML = '<p class="text-center py-4">Loading shifts...</p>';
+        const url = `${API_BASE_URL}get_shifts.php`;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const shifts = await response.json();
+            if (shifts.error) {
+                console.error("Error fetching shifts:", shifts.error);
+                container.innerHTML = `<p class="text-red-500 text-center py-4">Error: ${shifts.error}</p>`;
+            } else { renderShiftsTable(shifts); }
+        } catch (error) {
+            console.error('Error loading shifts:', error);
+            container.innerHTML = `<p class="text-red-500 text-center py-4">Could not load shifts. ${error.message}</p>`;
+        }
+    }
+
+    // --- Function to Render Shifts Table ---
+    function renderShiftsTable(shifts) {
+        console.log("[Render] Rendering Shifts Table...");
+        const container = document.getElementById('shifts-list-container');
+        if (!container) return;
+        if (!shifts || shifts.length === 0) {
+            container.innerHTML = '<p class="text-center py-4 text-gray-500">No shifts defined yet.</p>';
+            return;
+        }
+        let tableHtml = `
+            <table class="min-w-full divide-y divide-gray-200 border border-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Shift Name</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Start Time</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">End Time</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break (mins)</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">`;
+        shifts.forEach(shift => {
+            tableHtml += `
+                <tr id="shift-row-${shift.ShiftID}">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${shift.ShiftID}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${shift.ShiftName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${shift.StartTimeFormatted || shift.StartTime}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${shift.EndTimeFormatted || shift.EndTime}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${shift.BreakDurationMinutes !== null ? shift.BreakDurationMinutes : '0'}</td>
+                </tr>`;
+        });
+        tableHtml += `</tbody></table>`;
+        container.innerHTML = tableHtml;
+    }
+
+    // --- Function to Handle Add Shift Form Submission ---
+    async function handleAddShift(event) {
+        event.preventDefault();
+        const form = event.target;
+        const statusSpan = document.getElementById('add-shift-status');
+        const submitButton = form.querySelector('button[type="submit"]');
+        if (!form || !statusSpan || !submitButton) { console.error("Add Shift form elements missing."); return; }
+        const shiftName = form.elements['shift_name'].value.trim();
+        const startTime = form.elements['start_time'].value;
+        const endTime = form.elements['end_time'].value;
+        if (!shiftName || !startTime || !endTime) { statusSpan.textContent = 'Name, Start Time, and End Time are required.'; statusSpan.className = 'ml-4 text-sm text-red-600'; return; }
+        const formData = { shift_name: shiftName, start_time: startTime, end_time: endTime, break_duration: form.elements['break_duration'].value || 0 };
+        statusSpan.textContent = 'Adding shift...'; statusSpan.className = 'ml-4 text-sm text-blue-600'; submitButton.disabled = true;
+        try {
+            const response = await fetch(`${API_BASE_URL}add_shift.php`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData)
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                if (response.status === 400 && result.details) { const errorMessages = Object.values(result.details).join(' '); throw new Error(errorMessages || result.error || `HTTP error! status: ${response.status}`); }
+                throw new Error(result.error || `HTTP error! status: ${response.status}`);
+            }
+            statusSpan.textContent = result.message || 'Shift added successfully!'; statusSpan.className = 'ml-4 text-sm text-green-600';
+            form.reset();
+            await loadShifts(); // Refresh list
+            setTimeout(() => { if(statusSpan.textContent === (result.message || 'Shift added successfully!')) statusSpan.textContent = ''; }, 5000);
+        } catch (error) {
+            console.error('Error adding shift:', error);
+            statusSpan.textContent = `Error: ${error.message}`; statusSpan.className = 'ml-4 text-sm text-red-600';
+        } finally { submitButton.disabled = false; }
+    }
+
+
+    // --- Function to Display Schedules Section ---
+    async function displaySchedulesSection() {
+        console.log("[Display] Displaying Schedules Section...");
+        if (!pageTitleElement || !mainContentArea) return;
+        pageTitleElement.textContent = 'Employee Schedules';
+        mainContentArea.innerHTML = `
+            <div class="bg-white p-6 rounded-lg shadow-md border border-[#F7E6CA] space-y-6">
+                <div class="border-b border-gray-200 pb-4">
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Assign New Schedule</h3>
+                    <form id="add-schedule-form" class="space-y-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div>
+                                <label for="schedule-employee-select" class="block text-sm font-medium text-gray-700 mb-1">Employee:</label>
+                                <select id="schedule-employee-select" name="employee_id" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                    <option value="">Loading employees...</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="schedule-shift-select" class="block text-sm font-medium text-gray-700 mb-1">Shift (Optional):</label>
+                                <select id="schedule-shift-select" name="shift_id" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                    <option value="">-- No Specific Shift --</option>
+                                </select>
+                            </div>
+                             <div>
+                                <label for="schedule-workdays" class="block text-sm font-medium text-gray-700 mb-1">Work Days:</label>
+                                <input type="text" id="schedule-workdays" name="workdays" placeholder="e.g., Mon-Fri" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                            <div>
+                                <label for="schedule-start-date" class="block text-sm font-medium text-gray-700 mb-1">Start Date:</label>
+                                <input type="date" id="schedule-start-date" name="start_date" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                            <div>
+                                <label for="schedule-end-date" class="block text-sm font-medium text-gray-700 mb-1">End Date (Optional):</label>
+                                <input type="date" id="schedule-end-date" name="end_date" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                        </div>
+                        <div class="pt-2">
+                            <button type="submit" class="px-4 py-2 bg-[#594423] text-white rounded-md hover:bg-[#4E3B2A] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#594423] transition duration-150 ease-in-out">
+                                Add Schedule
+                            </button>
+                            <span id="add-schedule-status" class="ml-4 text-sm"></span>
+                        </div>
+                    </form>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Current & Past Schedules</h3>
+                    <div id="schedules-list-container" class="overflow-x-auto">
+                        <p>Loading schedules...</p>
+                    </div>
+                </div>
+            </div>`;
+         requestAnimationFrame(async () => {
+            await populateEmployeeDropdown('schedule-employee-select');
+            await populateShiftDropdown('schedule-shift-select');
+            const addScheduleForm = document.getElementById('add-schedule-form');
+            if (addScheduleForm) {
+                 if (!addScheduleForm.hasAttribute('data-listener-attached')) {
+                    addScheduleForm.addEventListener('submit', handleAddSchedule);
+                    addScheduleForm.setAttribute('data-listener-attached', 'true');
+                 }
+            } else { console.error("Add Schedule form not found after injecting HTML."); }
+            await loadSchedules();
+        });
+    }
+
+    // --- Function to Load Schedules Data ---
+    async function loadSchedules() {
+        console.log("[Load] Loading Schedules...");
+        const container = document.getElementById('schedules-list-container');
+        if (!container) return;
+        container.innerHTML = '<p class="text-center py-4">Loading schedules...</p>';
+        const url = `${API_BASE_URL}get_schedules.php`;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const schedules = await response.json();
+            if (schedules.error) {
+                console.error("Error fetching schedules:", schedules.error);
+                container.innerHTML = `<p class="text-red-500 text-center py-4">Error: ${schedules.error}</p>`;
+            } else { renderSchedulesTable(schedules); }
+        } catch (error) {
+            console.error('Error loading schedules:', error);
+            container.innerHTML = `<p class="text-red-500 text-center py-4">Could not load schedules. ${error.message}</p>`;
+        }
+    }
+
+    // --- Function to Render Schedules Table ---
+    function renderSchedulesTable(schedules) {
+        console.log("[Render] Rendering Schedules Table...");
+        const container = document.getElementById('schedules-list-container');
+        if (!container) return;
+        if (!schedules || schedules.length === 0) {
+            container.innerHTML = '<p class="text-center py-4 text-gray-500">No schedules found.</p>';
+            return;
+        }
+        let tableHtml = `
+            <table class="min-w-full divide-y divide-gray-200 border border-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Shift Assigned</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Work Days</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Start Date</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">End Date</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">`;
+        schedules.forEach(sched => {
+            const shiftInfo = sched.ShiftName ? `${sched.ShiftName} (${sched.StartTimeFormatted || sched.StartTime} - ${sched.EndTimeFormatted || sched.EndTime})` : '<span class="text-gray-400 italic">None</span>';
+            tableHtml += `
+                <tr id="sched-row-${sched.ScheduleID}">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${sched.ScheduleID}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${sched.EmployeeName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${shiftInfo}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${sched.Workdays || '<span class="text-gray-400 italic">N/A</span>'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${sched.StartDateFormatted || sched.StartDate}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${sched.EndDateFormatted}</td>
+                </tr>`;
+        });
+        tableHtml += `</tbody></table>`;
+        container.innerHTML = tableHtml;
+    }
+
+    // --- Function to Handle Add Schedule Form Submission ---
+    async function handleAddSchedule(event) {
+        event.preventDefault();
+        const form = event.target;
+        const statusSpan = document.getElementById('add-schedule-status');
+        const submitButton = form.querySelector('button[type="submit"]');
+        if (!form || !statusSpan || !submitButton) { console.error("Add Schedule form elements missing."); return; }
+        const employeeId = form.elements['employee_id'].value;
+        const startDate = form.elements['start_date'].value;
+        if (!employeeId || !startDate) { statusSpan.textContent = 'Employee and Start Date are required.'; statusSpan.className = 'ml-4 text-sm text-red-600'; return; }
+        const endDate = form.elements['end_date'].value;
+        if (endDate && endDate < startDate) { statusSpan.textContent = 'End Date cannot be before Start Date.'; statusSpan.className = 'ml-4 text-sm text-red-600'; return; }
+        const formData = { employee_id: employeeId, shift_id: form.elements['shift_id'].value || null, start_date: startDate, end_date: endDate || null, workdays: form.elements['workdays'].value.trim() || null };
+        statusSpan.textContent = 'Adding schedule...'; statusSpan.className = 'ml-4 text-sm text-blue-600'; submitButton.disabled = true;
+        try {
+            const response = await fetch(`${API_BASE_URL}add_schedule.php`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData)
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                if (response.status === 400 && result.details) { const errorMessages = Object.values(result.details).join(' '); throw new Error(errorMessages || result.error || `HTTP error! status: ${response.status}`); }
+                throw new Error(result.error || `HTTP error! status: ${response.status}`);
+            }
+            statusSpan.textContent = result.message || 'Schedule added successfully!'; statusSpan.className = 'ml-4 text-sm text-green-600';
+            form.reset();
+            await loadSchedules(); // Refresh list
+            setTimeout(() => { if(statusSpan.textContent === (result.message || 'Schedule added successfully!')) statusSpan.textContent = ''; }, 5000);
+        } catch (error) {
+            console.error('Error adding schedule:', error);
+            statusSpan.textContent = `Error: ${error.message}`; statusSpan.className = 'ml-4 text-sm text-red-600';
+        } finally { submitButton.disabled = false; }
+    }
+
+
+    // --- Function to Display Attendance Section ---
+    async function displayAttendanceSection() {
+        console.log("[Display] Displaying Attendance Section...");
+        if (!pageTitleElement || !mainContentArea) return;
+        pageTitleElement.textContent = 'Attendance Records';
+        mainContentArea.innerHTML = `
+            <div class="bg-white p-6 rounded-lg shadow-md border border-[#F7E6CA] space-y-6">
+                <div class="border-b border-gray-200 pb-4">
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Add Manual Attendance Record</h3>
+                    <form id="add-attendance-form" class="space-y-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div>
+                                <label for="attendance-employee-select" class="block text-sm font-medium text-gray-700 mb-1">Employee:</label>
+                                <select id="attendance-employee-select" name="employee_id" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                    <option value="">Loading employees...</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="attendance-date" class="block text-sm font-medium text-gray-700 mb-1">Date:</label>
+                                <input type="date" id="attendance-date" name="attendance_date" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                             <div>
+                                <label for="attendance-status" class="block text-sm font-medium text-gray-700 mb-1">Status:</label>
+                                <select id="attendance-status" name="status" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                    <option value="">-- Select Status --</option>
+                                    <option value="Present">Present</option>
+                                    <option value="Late">Late</option>
+                                    <option value="Absent">Absent</option>
+                                    <option value="On Leave">On Leave</option>
+                                    <option value="Half Day">Half Day</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="attendance-clock-in" class="block text-sm font-medium text-gray-700 mb-1">Clock In Time (Optional):</label>
+                                <input type="time" id="attendance-clock-in" name="clock_in_time" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                            <div>
+                                <label for="attendance-clock-out" class="block text-sm font-medium text-gray-700 mb-1">Clock Out Time (Optional):</label>
+                                <input type="time" id="attendance-clock-out" name="clock_out_time" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                            <div class="lg:col-span-3">
+                                <label for="attendance-notes" class="block text-sm font-medium text-gray-700 mb-1">Notes (Optional):</label>
+                                <textarea id="attendance-notes" name="notes" rows="2" placeholder="e.g., Forgot to clock in, OT approved by..." class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]"></textarea>
+                            </div>
+                        </div>
+                         <div class="pt-2">
+                            <button type="submit" class="px-4 py-2 bg-[#594423] text-white rounded-md hover:bg-[#4E3B2A] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#594423] transition duration-150 ease-in-out">
+                                Add Record
+                            </button>
+                            <span id="add-attendance-status" class="ml-4 text-sm"></span>
+                        </div>
+                    </form>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Attendance Log</h3>
+                     <div class="flex flex-wrap gap-4 mb-4 items-end">
+                         <div>
+                            <label for="filter-attendance-employee" class="block text-sm font-medium text-gray-700 mb-1">Filter by Employee:</label>
+                            <select id="filter-attendance-employee" class="w-full sm:w-auto p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                <option value="">All Employees</option>
+                            </select>
+                         </div>
+                         <div>
+                            <label for="filter-attendance-start-date" class="block text-sm font-medium text-gray-700 mb-1">From Date:</label>
+                            <input type="date" id="filter-attendance-start-date" class="w-full sm:w-auto p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                         </div>
+                         <div>
+                            <label for="filter-attendance-end-date" class="block text-sm font-medium text-gray-700 mb-1">To Date:</label>
+                            <input type="date" id="filter-attendance-end-date" class="w-full sm:w-auto p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                         </div>
+                         <div>
+                            <button id="filter-attendance-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-150 ease-in-out">
+                                Filter
+                            </button>
+                         </div>
+                     </div>
+                    <div id="attendance-list-container" class="overflow-x-auto">
+                        <p>Loading attendance records...</p>
+                    </div>
+                </div>
+            </div>`;
+        requestAnimationFrame(async () => {
+            await populateEmployeeDropdown('attendance-employee-select');
+            await populateEmployeeDropdown('filter-attendance-employee', true);
+            const addAttendanceForm = document.getElementById('add-attendance-form');
+            if (addAttendanceForm) {
+                 if (!addAttendanceForm.hasAttribute('data-listener-attached')) {
+                    addAttendanceForm.addEventListener('submit', handleAddAttendance);
+                    addAttendanceForm.setAttribute('data-listener-attached', 'true');
+                 }
+            } else { console.error("Add Attendance form not found after injecting HTML."); }
+            const filterBtn = document.getElementById('filter-attendance-btn');
+            if (filterBtn) {
+                 if (!filterBtn.hasAttribute('data-listener-attached')) {
+                    filterBtn.addEventListener('click', applyAttendanceFilter);
+                    filterBtn.setAttribute('data-listener-attached', 'true');
+                 }
+            } else { console.error("Filter Attendance button not found after injecting HTML."); }
+            await loadAttendanceRecords();
+        });
+    }
+
+    // --- Function to Apply Attendance Filter ---
+    function applyAttendanceFilter() {
+        const employeeId = document.getElementById('filter-attendance-employee')?.value;
+        const startDate = document.getElementById('filter-attendance-start-date')?.value;
+        const endDate = document.getElementById('filter-attendance-end-date')?.value;
+        loadAttendanceRecords(employeeId, startDate, endDate);
+    }
+
+    // --- Function to Load Attendance Records Data ---
+    async function loadAttendanceRecords(employeeId = null, startDate = null, endDate = null) {
+        console.log("[Load] Loading Attendance Records...");
+        const container = document.getElementById('attendance-list-container');
+        if (!container) return;
+        container.innerHTML = '<p class="text-center py-4">Loading attendance records...</p>';
+        const params = new URLSearchParams();
+        if (employeeId) params.append('employee_id', employeeId);
+        if (startDate) params.append('start_date', startDate);
+        if (endDate) params.append('end_date', endDate);
+        const url = `${API_BASE_URL}get_attendance.php?${params.toString()}`;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const records = await response.json();
+            if (records.error) {
+                console.error("Error fetching attendance records:", records.error);
+                container.innerHTML = `<p class="text-red-500 text-center py-4">Error: ${records.error}</p>`;
+            } else { renderAttendanceTable(records); }
+        } catch (error) {
+            console.error('Error loading attendance records:', error);
+            container.innerHTML = `<p class="text-red-500 text-center py-4">Could not load attendance records. ${error.message}</p>`;
+        }
+    }
+
+    // --- Function to Render Attendance Table ---
+    function renderAttendanceTable(records) {
+        console.log("[Render] Rendering Attendance Table...");
+        const container = document.getElementById('attendance-list-container');
+        if (!container) return;
+        if (!records || records.length === 0) {
+            container.innerHTML = '<p class="text-center py-4 text-gray-500">No attendance records found for the selected criteria.</p>';
+            return;
+        }
+        let tableHtml = `
+            <table class="min-w-full divide-y divide-gray-200 border border-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Clock In</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Clock Out</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notes</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">`;
+        records.forEach(rec => {
+            tableHtml += `
+                <tr id="att-row-${rec.RecordID}">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${rec.RecordID}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${rec.EmployeeName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${rec.AttendanceDateFormatted || rec.AttendanceDate}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${rec.ClockInTimeFormatted}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${rec.ClockOutTimeFormatted}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${rec.Status || '<span class="text-gray-400 italic">N/A</span>'}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 min-w-[150px]">${rec.Notes || ''}</td>
+                </tr>`;
+        });
+        tableHtml += `</tbody></table>`;
+        container.innerHTML = tableHtml;
+    }
+
+    // --- Function to Handle Add Attendance Form Submission ---
+    async function handleAddAttendance(event) {
+        event.preventDefault();
+        const form = event.target;
+        const statusSpan = document.getElementById('add-attendance-status');
+        const submitButton = form.querySelector('button[type="submit"]');
+        if (!form || !statusSpan || !submitButton) { console.error("Add Attendance form elements missing."); return; }
+        const employeeId = form.elements['employee_id'].value;
+        const attendanceDate = form.elements['attendance_date'].value;
+        if (!employeeId || !attendanceDate) { statusSpan.textContent = 'Employee and Date are required.'; statusSpan.className = 'ml-4 text-sm text-red-600'; return; }
+        const clockIn = form.elements['clock_in_time'].value;
+        const clockOut = form.elements['clock_out_time'].value;
+        if (clockIn && clockOut && clockOut <= clockIn) { statusSpan.textContent = 'Clock Out Time must be after Clock In Time.'; statusSpan.className = 'ml-4 text-sm text-red-600'; return; }
+        const formData = { employee_id: employeeId, attendance_date: attendanceDate, clock_in_time: clockIn || null, clock_out_time: clockOut || null, status: form.elements['status'].value || null, notes: form.elements['notes'].value.trim() || null };
+        statusSpan.textContent = 'Adding record...'; statusSpan.className = 'ml-4 text-sm text-blue-600'; submitButton.disabled = true;
+        try {
+            const response = await fetch(`${API_BASE_URL}add_attendance.php`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData)
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                if (response.status === 400 && result.details) { const errorMessages = Object.values(result.details).join(' '); throw new Error(errorMessages || result.error || `HTTP error! status: ${response.status}`); }
+                throw new Error(result.error || `HTTP error! status: ${response.status}`);
+            }
+            statusSpan.textContent = result.message || 'Record added successfully!'; statusSpan.className = 'ml-4 text-sm text-green-600';
+            form.reset();
+            await loadAttendanceRecords(); // Refresh list
+            setTimeout(() => { if(statusSpan.textContent === (result.message || 'Record added successfully!')) statusSpan.textContent = ''; }, 5000);
+        } catch (error) {
+            console.error('Error adding attendance record:', error);
+            statusSpan.textContent = `Error: ${error.message}`; statusSpan.className = 'ml-4 text-sm text-red-600';
+        } finally { submitButton.disabled = false; }
+    }
+
+    // --- Function to Display Timesheets Section ---
+    async function displayTimesheetsSection() {
+        console.log("[Display] Displaying Timesheets Section...");
+        if (!pageTitleElement || !mainContentArea) return;
+        pageTitleElement.textContent = 'Manage Timesheets';
+        mainContentArea.innerHTML = `
+            <div class="bg-white p-6 rounded-lg shadow-md border border-[#F7E6CA] space-y-6">
+                <div class="border-b border-gray-200 pb-4">
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Create New Timesheet Period</h3>
+                    <form id="add-timesheet-form" class="space-y-4">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                            <div>
+                                <label for="timesheet-employee-select" class="block text-sm font-medium text-gray-700 mb-1">Employee:</label>
+                                <select id="timesheet-employee-select" name="employee_id" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                    <option value="">Loading employees...</option>
+                                </select>
+                            </div>
+                             <div>
+                                <label for="timesheet-start-date" class="block text-sm font-medium text-gray-700 mb-1">Period Start Date:</label>
+                                <input type="date" id="timesheet-start-date" name="period_start_date" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                            <div>
+                                <label for="timesheet-end-date" class="block text-sm font-medium text-gray-700 mb-1">Period End Date:</label>
+                                <input type="date" id="timesheet-end-date" name="period_end_date" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                            </div>
+                         <div class="pt-2">
+                            <button type="submit" class="px-4 py-2 bg-[#594423] text-white rounded-md hover:bg-[#4E3B2A] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#594423] transition duration-150 ease-in-out">
+                                Create Timesheet
+                            </button>
+                            <span id="add-timesheet-status" class="ml-4 text-sm"></span> </div>
+                    </form>
+                </div>
+                <div>
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Existing Timesheets</h3>
+                     <div class="flex flex-wrap gap-4 mb-4 items-end">
+                          <div>
+                            <label for="filter-timesheet-employee" class="block text-sm font-medium text-gray-700 mb-1">Filter by Employee:</label>
+                            <select id="filter-timesheet-employee" class="w-full sm:w-auto p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                <option value="">All Employees</option>
+                                </select>
+                         </div>
+                         <div>
+                            <label for="filter-timesheet-status" class="block text-sm font-medium text-gray-700 mb-1">Filter by Status:</label>
+                            <select id="filter-timesheet-status" class="w-full sm:w-auto p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                <option value="">All Statuses</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Submitted">Submitted</option>
+                                <option value="Approved">Approved</option>
+                                <option value="Rejected">Rejected</option>
+                                </select>
+                         </div>
+                          <div>
+                            <label for="filter-timesheet-start-date" class="block text-sm font-medium text-gray-700 mb-1">Period Start From:</label>
+                            <input type="date" id="filter-timesheet-start-date" class="w-full sm:w-auto p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                         </div>
+                         <div>
+                            <label for="filter-timesheet-end-date" class="block text-sm font-medium text-gray-700 mb-1">Period End To:</label>
+                            <input type="date" id="filter-timesheet-end-date" class="w-full sm:w-auto p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                         </div>
+                         <div>
+                            <button id="filter-timesheet-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition duration-150 ease-in-out">
+                                Filter
+                            </button>
+                         </div>
+                     </div>
+                    <div id="timesheets-list-container" class="overflow-x-auto">
+                        <p>Loading timesheets...</p>
+                    </div>
+                </div>
+            </div>`;
+        requestAnimationFrame(async () => {
+            await populateEmployeeDropdown('timesheet-employee-select');
+            await populateEmployeeDropdown('filter-timesheet-employee', true);
+            const addTimesheetForm = document.getElementById('add-timesheet-form');
+            if (addTimesheetForm) {
+                 if (!addTimesheetForm.hasAttribute('data-listener-attached')) {
+                     addTimesheetForm.addEventListener('submit', handleAddTimesheet);
+                     addTimesheetForm.setAttribute('data-listener-attached', 'true');
+                 }
+            } else { console.error("Add Timesheet form not found after injecting HTML."); }
+            const filterBtn = document.getElementById('filter-timesheet-btn');
+            if (filterBtn) {
+                 if (!filterBtn.hasAttribute('data-listener-attached')) {
+                    filterBtn.addEventListener('click', applyTimesheetFilter);
+                    filterBtn.setAttribute('data-listener-attached', 'true');
+                 }
+            } else { console.error("Filter Timesheet button not found after injecting HTML."); }
+            const timesheetListContainer = document.getElementById('timesheets-list-container');
+            if (timesheetListContainer) {
+                 if (!timesheetListContainer.hasAttribute('data-listener-attached')) {
+                    timesheetListContainer.addEventListener('click', handleTimesheetAction);
+                    timesheetListContainer.setAttribute('data-listener-attached', 'true');
+                 }
+            } else { console.error("Timesheet list container not found after injecting HTML."); }
+            await loadTimesheets();
+        });
+    }
+
+     // --- Function to Apply Timesheet Filter ---
+    function applyTimesheetFilter() {
+        const employeeId = document.getElementById('filter-timesheet-employee')?.value;
+        const status = document.getElementById('filter-timesheet-status')?.value;
+        const startDate = document.getElementById('filter-timesheet-start-date')?.value;
+        const endDate = document.getElementById('filter-timesheet-end-date')?.value;
+        loadTimesheets(employeeId, status, startDate, endDate);
+    }
+
+    // --- Function to Load Timesheets Data ---
+    async function loadTimesheets(employeeId = null, status = null, startDate = null, endDate = null) {
+        console.log("[Load] Loading Timesheets...");
+        const container = document.getElementById('timesheets-list-container');
+        if (!container) return;
+        container.innerHTML = '<p class="text-center py-4">Loading timesheets...</p>';
+        const params = new URLSearchParams();
+        if (employeeId) params.append('employee_id', employeeId);
+        if (status) params.append('status', status);
+        if (startDate) params.append('start_date', startDate);
+        if (endDate) params.append('end_date', endDate);
+        const url = `${API_BASE_URL}get_timesheets.php?${params.toString()}`;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const timesheets = await response.json();
+            if (timesheets.error) {
+                console.error("Error fetching timesheets:", timesheets.error);
+                container.innerHTML = `<p class="text-red-500 text-center py-4">Error: ${timesheets.error}</p>`;
+            } else { renderTimesheetsTable(timesheets); }
+        } catch (error) {
+            console.error('Error loading timesheets:', error);
+            container.innerHTML = `<p class="text-red-500 text-center py-4">Could not load timesheets. ${error.message}</p>`;
+        }
+    }
+
+    // --- Function to Render Timesheets Table ---
+    function renderTimesheetsTable(timesheets) {
+        console.log("[Render] Rendering Timesheets Table...");
+        const container = document.getElementById('timesheets-list-container');
+        if (!container) return;
+        if (!timesheets || timesheets.length === 0) {
+            container.innerHTML = '<p class="text-center py-4 text-gray-500">No timesheets found for the selected criteria.</p>';
+            return;
+        }
+        let tableHtml = `
+            <table class="min-w-full divide-y divide-gray-200 border border-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Period Start</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Period End</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total Hrs</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Hrs</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Submitted</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Approved By</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">`;
+        timesheets.forEach(ts => {
+            let statusClass = 'text-gray-700';
+            if (ts.Status === 'Approved') statusClass = 'text-green-600 font-semibold';
+            else if (ts.Status === 'Rejected') statusClass = 'text-red-600 font-semibold';
+            else if (ts.Status === 'Submitted') statusClass = 'text-blue-600';
+            tableHtml += `
+                <tr id="ts-row-${ts.TimesheetID}">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${ts.TimesheetID}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${ts.EmployeeName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${ts.PeriodStartDateFormatted || ts.PeriodStartDate}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${ts.PeriodEndDateFormatted || ts.PeriodEndDate}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700 text-right">${ts.TotalHoursWorked}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700 text-right">${ts.OvertimeHours}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm ${statusClass}">${ts.Status || '<span class="italic">N/A</span>'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${ts.SubmittedDateFormatted || '-'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${ts.ApproverName || '-'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium space-x-2">
+                        <button data-ts-id="${ts.TimesheetID}" class="text-indigo-600 hover:text-indigo-900 view-ts-btn" title="View/Edit Details">
+                           <i class="fas fa-eye"></i>
+                        </button>
+                         ${ts.Status === 'Submitted' ? `
+                            <button data-ts-id="${ts.TimesheetID}" class="text-green-600 hover:text-green-800 approve-ts-btn" title="Approve">
+                               <i class="fas fa-check"></i>
+                            </button>
+                            <button data-ts-id="${ts.TimesheetID}" class="text-red-600 hover:text-red-800 reject-ts-btn" title="Reject">
+                               <i class="fas fa-times"></i>
+                            </button>
+                         ` : ''}
+                    </td>
+                </tr>`;
+        });
+        tableHtml += `</tbody></table>`;
+        container.innerHTML = tableHtml;
+    }
+
+    // --- Function to Handle Add Timesheet Form Submission ---
+    async function handleAddTimesheet(event) {
+        event.preventDefault();
+        const form = event.target;
+        const statusSpan = document.getElementById('add-timesheet-status');
+        const submitButton = form.querySelector('button[type="submit"]');
+        if (!form || !statusSpan || !submitButton) { console.error("Add Timesheet form elements missing."); return; }
+        const employeeId = form.elements['employee_id'].value;
+        const startDate = form.elements['period_start_date'].value;
+        const endDate = form.elements['period_end_date'].value;
+        if (!employeeId || !startDate || !endDate) { statusSpan.textContent = 'Employee, Period Start Date, and Period End Date are required.'; statusSpan.className = 'ml-4 text-sm text-red-600'; return; }
+        if (endDate < startDate) { statusSpan.textContent = 'Period End Date cannot be before Period Start Date.'; statusSpan.className = 'ml-4 text-sm text-red-600'; return; }
+        const formData = { employee_id: employeeId, period_start_date: startDate, period_end_date: endDate, /* schedule_id: form.elements['schedule_id']?.value || null */ };
+        statusSpan.textContent = 'Creating timesheet...'; statusSpan.className = 'ml-4 text-sm text-blue-600'; submitButton.disabled = true;
+        try {
+            const response = await fetch(`${API_BASE_URL}add_timesheet.php`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData)
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                if (response.status === 400 && result.details) { const errorMessages = Object.values(result.details).join(' '); if(result.details.duplicate) throw new Error(result.details.duplicate); throw new Error(errorMessages || result.error || `HTTP error! status: ${response.status}`); }
+                throw new Error(result.error || `HTTP error! status: ${response.status}`);
+            }
+            statusSpan.textContent = result.message || 'Timesheet created successfully!'; statusSpan.className = 'ml-4 text-sm text-green-600';
+            form.reset();
+            await loadTimesheets(); // Refresh list
+            setTimeout(() => { if(statusSpan.textContent === (result.message || 'Timesheet created successfully!')) statusSpan.textContent = ''; }, 5000);
+        } catch (error) {
+            console.error('Error creating timesheet:', error);
+            statusSpan.textContent = `Error: ${error.message}`; statusSpan.className = 'ml-4 text-sm text-red-600';
+        } finally { submitButton.disabled = false; }
+    }
+
+    // --- Function to Handle Timesheet Table Actions ---
+    function handleTimesheetAction(event) {
+        const viewButton = event.target.closest('.view-ts-btn');
+        const approveButton = event.target.closest('.approve-ts-btn');
+        const rejectButton = event.target.closest('.reject-ts-btn');
+
+        if (viewButton) {
+            const timesheetId = viewButton.dataset.tsId;
+            handleViewTimesheet(timesheetId);
+        } else if (approveButton) {
+            const timesheetId = approveButton.dataset.tsId;
+            handleApproveTimesheet(timesheetId);
+        } else if (rejectButton) {
+             const timesheetId = rejectButton.dataset.tsId;
+             handleRejectTimesheet(timesheetId);
+        }
+    }
+
+    // --- Action Handlers ---
+    async function handleViewTimesheet(timesheetId) {
+        console.log(`View/Edit button clicked for Timesheet ID: ${timesheetId}`);
+        const url = `${API_BASE_URL}get_timesheet_details.php?id=${timesheetId}`;
+        console.log(`Fetching details from: ${url}`);
+        try {
+            const response = await fetch(url);
+            const responseText = await response.text();
+            console.log(`[handleViewTimesheet] Raw response status: ${response.status}`);
+            if (!response.ok) { throw new Error(`HTTP error! status: ${response.status}, Response: ${responseText.substring(0,500)}...`); }
+            const details = JSON.parse(responseText);
+            if (details.error) {
+                console.error(`[handleViewTimesheet] API Error:`, details.error);
+                alert(`Error fetching timesheet details: ${details.error}`);
+            } else {
+                console.log(`[handleViewTimesheet] Fetched Details:`, details);
+                displayTimesheetModal(details); // Call function to show the modal
+            }
+        } catch(error) {
+             console.error(`[handleViewTimesheet] Error fetching details for ID ${timesheetId}:`, error);
+             alert(`Could not fetch timesheet details. ${error.message}`);
+        }
+    }
+
+    function handleApproveTimesheet(timesheetId) {
+        console.log(`Approve button clicked for Timesheet ID: ${timesheetId}`);
+        if (confirm(`Are you sure you want to APPROVE Timesheet ID ${timesheetId}?`)) {
+             alert(`Approve action for Timesheet ID ${timesheetId} needs API call implementation.`);
+             // TODO: Implement API call to update status to 'Approved'
+             // After successful API call, refresh the list: loadTimesheets();
+        }
+    }
+
+     function handleRejectTimesheet(timesheetId) {
+        console.log(`Reject button clicked for Timesheet ID: ${timesheetId}`);
+         if (confirm(`Are you sure you want to REJECT Timesheet ID ${timesheetId}?`)) {
+             alert(`Reject action for Timesheet ID ${timesheetId} needs API call implementation.`);
+              // TODO: Implement API call to update status to 'Rejected'
+              // After successful API call, refresh the list: loadTimesheets();
+        }
+    }
+
+    // --- Function to Display Timesheet Details in Modal ---
+    function displayTimesheetModal(details) {
+        if (!timesheetModal || !modalAttendanceEntries) {
+            console.error("Modal elements not found, cannot display details.");
+            return;
+        }
+
+        // Populate main details
+        if(modalTimesheetId) modalTimesheetId.textContent = details.TimesheetID || 'N/A';
+        if(modalEmployeeName) modalEmployeeName.textContent = details.EmployeeName || 'N/A';
+        if(modalEmployeeJob) modalEmployeeJob.textContent = details.EmployeeJobTitle || 'N/A';
+        if(modalPeriodStart) modalPeriodStart.textContent = details.PeriodStartDateFormatted || details.PeriodStartDate || 'N/A';
+        if(modalPeriodEnd) modalPeriodEnd.textContent = details.PeriodEndDateFormatted || details.PeriodEndDate || 'N/A';
+        if(modalStatus) {
+             modalStatus.textContent = details.Status || 'N/A';
+             modalStatus.className = 'font-semibold'; // Reset class
+             if (details.Status === 'Approved') modalStatus.classList.add('text-green-600');
+             else if (details.Status === 'Rejected') modalStatus.classList.add('text-red-600');
+             else if (details.Status === 'Submitted') modalStatus.classList.add('text-blue-600');
+             else modalStatus.classList.add('text-gray-700');
+        }
+        if(modalTotalHours) modalTotalHours.textContent = details.TotalHoursWorkedFormatted || '-';
+        if(modalOvertimeHours) modalOvertimeHours.textContent = details.OvertimeHoursFormatted || '-';
+        if(modalSubmittedDate) modalSubmittedDate.textContent = details.SubmittedDateFormatted || '-';
+        if(modalApproverName) modalApproverName.textContent = details.ApproverName || '-';
+
+
+        // Populate attendance entries table
+        modalAttendanceEntries.innerHTML = ''; // Clear previous entries
+        if (details.attendance_entries && details.attendance_entries.length > 0) {
+            let attendanceTableHtml = `
+                <table class="min-w-full divide-y divide-gray-200 text-sm">
+                    <thead class="bg-gray-100">
+                        <tr>
+                            <th class="px-3 py-2 text-left font-medium text-gray-600">Date</th>
+                            <th class="px-3 py-2 text-left font-medium text-gray-600">In</th>
+                            <th class="px-3 py-2 text-left font-medium text-gray-600">Out</th>
+                            <th class="px-3 py-2 text-left font-medium text-gray-600">Hrs</th>
+                            <th class="px-3 py-2 text-left font-medium text-gray-600">Status</th>
+                            <th class="px-3 py-2 text-left font-medium text-gray-600">Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">`;
+
+            details.attendance_entries.forEach(entry => {
+                attendanceTableHtml += `
+                    <tr>
+                        <td class="px-3 py-2 whitespace-nowrap">${entry.AttendanceDateFormatted || entry.AttendanceDate}</td>
+                        <td class="px-3 py-2 whitespace-nowrap">${entry.ClockInTimeFormatted}</td>
+                        <td class="px-3 py-2 whitespace-nowrap">${entry.ClockOutTimeFormatted}</td>
+                        <td class="px-3 py-2 whitespace-nowrap text-right">${entry.HoursWorkedCalcFormatted}</td>
+                        <td class="px-3 py-2 whitespace-nowrap">${entry.Status || ''}</td>
+                        <td class="px-3 py-2">${entry.Notes || ''}</td>
+                    </tr>`;
+            });
+
+            attendanceTableHtml += `</tbody></table>`;
+            modalAttendanceEntries.innerHTML = attendanceTableHtml;
+        } else {
+            modalAttendanceEntries.innerHTML = '<p class="p-4 text-gray-500 text-center">No attendance entries found for this period.</p>';
+        }
+
+        // Show the modal
+        timesheetModal.classList.remove('hidden');
+        document.body.classList.add('overflow-hidden'); // Prevent background scrolling
+
+    }
+
+    // --- Function to Close Timesheet Modal ---
+    function closeTimesheetModal() {
+         if (timesheetModal) {
+             timesheetModal.classList.add('hidden');
+         }
+         document.body.classList.remove('overflow-hidden'); // Restore background scrolling
+    }
+
+
+    // ========================================================================
+    // PAYROLL SECTION FUNCTIONS
+    // ========================================================================
+
+    // --- Function to Display Salaries Section ---
+    async function displaySalariesSection() {
+        console.log("[Display] Displaying Salaries Section..."); // Debug Log
+        if (!pageTitleElement || !mainContentArea) return;
+        pageTitleElement.textContent = 'Employee Salaries'; // Update page title
+
+        // Inject HTML structure for the salaries section
+        mainContentArea.innerHTML = `
+            <div class="bg-white p-6 rounded-lg shadow-md border border-[#F7E6CA] space-y-6">
+                <div class="border-b border-gray-200 pb-4">
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Add / Update Salary</h3>
+                    <form id="add-update-salary-form" class="space-y-4">
+                         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div>
+                                <label for="salary-employee-select" class="block text-sm font-medium text-gray-700 mb-1">Employee:</label>
+                                <select id="salary-employee-select" name="employee_id" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                    <option value="">Loading employees...</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="salary-base" class="block text-sm font-medium text-gray-700 mb-1">Base Salary:</label>
+                                <input type="number" id="salary-base" name="base_salary" required step="0.01" min="0" placeholder="e.g., 50000.00" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                             <div>
+                                <label for="salary-frequency" class="block text-sm font-medium text-gray-700 mb-1">Pay Frequency:</label>
+                                <select id="salary-frequency" name="pay_frequency" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                                    <option value="">-- Select --</option>
+                                    <option value="Monthly">Monthly</option>
+                                    <option value="Bi-Weekly">Bi-Weekly</option>
+                                    <option value="Weekly">Weekly</option>
+                                    <option value="Hourly">Hourly</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="salary-pay-rate" class="block text-sm font-medium text-gray-700 mb-1">Pay Rate (if Hourly):</label>
+                                <input type="number" id="salary-pay-rate" name="pay_rate" step="0.01" min="0" placeholder="e.g., 250.00" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                            <div>
+                                <label for="salary-effective-date" class="block text-sm font-medium text-gray-700 mb-1">Effective Date:</label>
+                                <input type="date" id="salary-effective-date" name="effective_date" required class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-[#4E3B2A] focus:border-[#4E3B2A]">
+                            </div>
+                        </div>
+                        <div class="pt-2">
+                            <button type="submit" class="px-4 py-2 bg-[#594423] text-white rounded-md hover:bg-[#4E3B2A] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#594423] transition duration-150 ease-in-out">
+                                Save Salary Info
+                            </button>
+                            <span id="add-salary-status" class="ml-4 text-sm"></span> </div>
+                    </form>
+                </div>
+
+                <div>
+                    <h3 class="text-lg font-semibold text-[#4E3B2A] mb-3">Current Employee Salaries</h3>
+                     <div id="salaries-list-container" class="overflow-x-auto">
+                        <p>Loading salaries...</p>
+                    </div>
+                </div>
+            </div>`;
+
+        // Add listener after HTML injection
+        requestAnimationFrame(async () => {
+            await populateEmployeeDropdown('salary-employee-select'); // Populate dropdown for the form
+            const addSalaryForm = document.getElementById('add-update-salary-form');
+            if (addSalaryForm) {
+                 if (!addSalaryForm.hasAttribute('data-listener-attached')) {
+                    addSalaryForm.addEventListener('submit', handleAddSalary);
+                    addSalaryForm.setAttribute('data-listener-attached', 'true');
+                 }
+            } else { console.error("Add/Update Salary form not found after injecting HTML."); }
+            await loadSalaries(); // Load initial list
+        });
+    }
+
+     // --- Function to Load Salaries Data ---
+    async function loadSalaries() {
+        console.log("[Load] Loading Salaries..."); // Debug Log
+        const container = document.getElementById('salaries-list-container');
+        if (!container) return;
+        container.innerHTML = '<p class="text-center py-4">Loading salaries...</p>'; // Loading indicator
+
+        const url = `${API_BASE_URL}get_salaries.php`; // Add filters later if needed
+
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const salaries = await response.json();
+
+            if (salaries.error) {
+                console.error("Error fetching salaries:", salaries.error);
+                container.innerHTML = `<p class="text-red-500 text-center py-4">Error: ${salaries.error}</p>`;
+            } else {
+                renderSalariesTable(salaries); // Render the table
+            }
+        } catch (error) {
+            console.error('Error loading salaries:', error);
+            container.innerHTML = `<p class="text-red-500 text-center py-4">Could not load salaries. ${error.message}</p>`;
+        }
+    }
+
+    // --- Function to Render Salaries Table ---
+    function renderSalariesTable(salaries) {
+        console.log("[Render] Rendering Salaries Table..."); // Debug Log
+        const container = document.getElementById('salaries-list-container');
+        if (!container) return;
+
+        if (!salaries || salaries.length === 0) {
+            container.innerHTML = '<p class="text-center py-4 text-gray-500">No current salary records found.</p>';
+            return;
+        }
+
+        // Create table structure
+        let tableHtml = `
+            <table class="min-w-full divide-y divide-gray-200 border border-gray-300">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Emp. ID</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee Name</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Title</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Base Salary</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Frequency</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Pay Rate (Hourly)</th>
+                        <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Effective Date</th>
+                        </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">`;
+
+        // Add rows for each salary record
+        salaries.forEach(salary => {
+            tableHtml += `
+                <tr id="salary-row-${salary.SalaryID}">
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${salary.EmployeeID}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${salary.EmployeeName}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${salary.JobTitle || '-'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700 text-right">${salary.BaseSalaryFormatted || '-'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700">${salary.PayFrequency || '-'}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-700 text-right">${salary.PayRateFormatted}</td>
+                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">${salary.EffectiveDateFormatted || salary.EffectiveDate}</td>
+                    </tr>`;
+        });
+
+        tableHtml += `
+                </tbody>
+            </table>`;
+
+        container.innerHTML = tableHtml;
+        // Add event listeners for edit/delete buttons here if they exist
+    }
+
+    // --- Function to Handle Add/Update Salary Form Submission ---
+    async function handleAddSalary(event) {
+        event.preventDefault(); // Prevent default form submission
+        const form = event.target;
+        const statusSpan = document.getElementById('add-salary-status');
+        const submitButton = form.querySelector('button[type="submit"]');
+
+        if (!form || !statusSpan || !submitButton) {
+             console.error("Add/Update Salary form elements missing.");
+             return;
+        }
+
+        // Basic Client-side validation
+        const employeeId = form.elements['employee_id'].value;
+        const baseSalary = form.elements['base_salary'].value;
+        const payFrequency = form.elements['pay_frequency'].value;
+        const effectiveDate = form.elements['effective_date'].value;
+
+        if (!employeeId || !baseSalary || !payFrequency || !effectiveDate) {
+            statusSpan.textContent = 'Employee, Base Salary, Pay Frequency, and Effective Date are required.';
+            statusSpan.className = 'ml-4 text-sm text-red-600';
+            return;
+        }
+
+        const formData = {
+            employee_id: employeeId,
+            base_salary: parseFloat(baseSalary), // Ensure it's a number
+            pay_frequency: payFrequency,
+            pay_rate: form.elements['pay_rate'].value ? parseFloat(form.elements['pay_rate'].value) : null, // Send null if empty
+            effective_date: effectiveDate
+        };
+
+        statusSpan.textContent = 'Saving salary info...';
+        statusSpan.className = 'ml-4 text-sm text-blue-600';
+        submitButton.disabled = true;
+
+        try {
+            const response = await fetch(`${API_BASE_URL}add_update_salary.php`, {
+                method: 'POST',
+                 headers: {
+                    'Content-Type': 'application/json' // Sending JSON
+                },
+                body: JSON.stringify(formData) // Convert JS object to JSON string
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                // Handle validation errors specifically if provided
+                if (response.status === 400 && result.details) {
+                     const errorMessages = Object.values(result.details).join(' ');
+                     throw new Error(errorMessages || result.error || `HTTP error! status: ${response.status}`);
+                }
+                throw new Error(result.error || `HTTP error! status: ${response.status}`);
+            }
+
+            statusSpan.textContent = result.message || 'Salary updated successfully!';
+            statusSpan.className = 'ml-4 text-sm text-green-600';
+            form.reset(); // Clear the form
+            await loadSalaries(); // Refresh the salaries list
+
+            // Optionally clear message after a few seconds
+            setTimeout(() => { if(statusSpan.textContent === (result.message || 'Salary updated successfully!')) statusSpan.textContent = ''; }, 5000);
+
+
+        } catch (error) {
+            console.error('Error updating salary:', error);
+            statusSpan.textContent = `Error: ${error.message}`;
+            statusSpan.className = 'ml-4 text-sm text-red-600';
+        } finally {
+            submitButton.disabled = false; // Re-enable button
+        }
+    }
+
+
+
+    // ========================================================================
+    // TIMESHEET MODAL FUNCTIONS
+    // ========================================================================
+
+    // --- Function to Display Timesheet Details in Modal ---
+    function displayTimesheetModal(details) {
+        if (!timesheetModal || !modalAttendanceEntries) {
+            console.error("Modal elements not found, cannot display details.");
+            return;
+        }
+        if(modalTimesheetId) modalTimesheetId.textContent = details.TimesheetID || 'N/A';
+        if(modalEmployeeName) modalEmployeeName.textContent = details.EmployeeName || 'N/A';
+        if(modalEmployeeJob) modalEmployeeJob.textContent = details.EmployeeJobTitle || 'N/A';
+        if(modalPeriodStart) modalPeriodStart.textContent = details.PeriodStartDateFormatted || details.PeriodStartDate || 'N/A';
+        if(modalPeriodEnd) modalPeriodEnd.textContent = details.PeriodEndDateFormatted || details.PeriodEndDate || 'N/A';
+        if(modalStatus) {
+             modalStatus.textContent = details.Status || 'N/A';
+             modalStatus.className = 'font-semibold';
+             if (details.Status === 'Approved') modalStatus.classList.add('text-green-600');
+             else if (details.Status === 'Rejected') modalStatus.classList.add('text-red-600');
+             else if (details.Status === 'Submitted') modalStatus.classList.add('text-blue-600');
+             else modalStatus.classList.add('text-gray-700');
+        }
+        if(modalTotalHours) modalTotalHours.textContent = details.TotalHoursWorkedFormatted || '-';
+        if(modalOvertimeHours) modalOvertimeHours.textContent = details.OvertimeHoursFormatted || '-';
+        if(modalSubmittedDate) modalSubmittedDate.textContent = details.SubmittedDateFormatted || '-';
+        if(modalApproverName) modalApproverName.textContent = details.ApproverName || '-';
+        modalAttendanceEntries.innerHTML = '';
+        if (details.attendance_entries && details.attendance_entries.length > 0) {
+            let attendanceTableHtml = `<table class="min-w-full divide-y divide-gray-200 text-sm"><thead class="bg-gray-100"><tr><th class="px-3 py-2 text-left font-medium text-gray-600">Date</th><th class="px-3 py-2 text-left font-medium text-gray-600">In</th><th class="px-3 py-2 text-left font-medium text-gray-600">Out</th><th class="px-3 py-2 text-left font-medium text-gray-600">Hrs</th><th class="px-3 py-2 text-left font-medium text-gray-600">Status</th><th class="px-3 py-2 text-left font-medium text-gray-600">Notes</th></tr></thead><tbody class="bg-white divide-y divide-gray-200">`;
+            details.attendance_entries.forEach(entry => {
+                attendanceTableHtml += `<tr><td class="px-3 py-2 whitespace-nowrap">${entry.AttendanceDateFormatted || entry.AttendanceDate}</td><td class="px-3 py-2 whitespace-nowrap">${entry.ClockInTimeFormatted}</td><td class="px-3 py-2 whitespace-nowrap">${entry.ClockOutTimeFormatted}</td><td class="px-3 py-2 whitespace-nowrap text-right">${entry.HoursWorkedCalcFormatted}</td><td class="px-3 py-2 whitespace-nowrap">${entry.Status || ''}</td><td class="px-3 py-2">${entry.Notes || ''}</td></tr>`;
+            });
+            attendanceTableHtml += `</tbody></table>`;
+            modalAttendanceEntries.innerHTML = attendanceTableHtml;
+        } else {
+            modalAttendanceEntries.innerHTML = '<p class="p-4 text-gray-500 text-center">No attendance entries found for this period.</p>';
+        }
+        timesheetModal.classList.remove('hidden');
+        document.body.classList.add('overflow-hidden');
+    }
+
+    // --- Function to Close Timesheet Modal ---
+    function closeTimesheetModal() {
+         if (timesheetModal) {
+             timesheetModal.classList.add('hidden');
+         }
+         document.body.classList.remove('overflow-hidden');
+    }
+
+
+}); // End DOMContentLoaded
