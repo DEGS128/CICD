@@ -87,7 +87,7 @@
         }
 
         // Submit to login API
-        fetch('php/api/login.php', {
+        fetch('api/index.php?route=auth/login', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -96,25 +96,40 @@
         })
         .then(response => response.json())
         .then(data => {
-          if (data.two_factor_required) {
+          if (data.success === false) {
+            Swal.fire('Error', data.message || data.error || 'Login failed', 'error');
+          } else if (data.two_factor_required) {
             Swal.fire('2FA Required', data.message, 'info');
-          } else if (data.message === 'Login successful.') {
+          } else if (data.success === true || data.message === 'Login successful' || data.message === 'Login successful.') {
             Swal.fire('Success', 'Login successful!', 'success').then(() => {
-              // Use the redirect_url from the API response for proper role-based redirection
-              if (data.redirect_url) {
-                window.location.href = data.redirect_url;
-              } else {
-                // Fallback to default redirect if redirect_url is not provided
-                window.location.href = 'index.php';
+              // Determine redirect based on user role
+              const user = data.data?.user || data.user;
+              let redirect_url = 'index.php';
+              
+              if (user && user.role) {
+                if (user.role === 'System Admin') {
+                  redirect_url = 'admin_landing.php';
+                } else if (user.role === 'Employee') {
+                  redirect_url = 'employee_landing.php';
+                }
               }
+              
+              // Use provided redirect_url if available, otherwise use role-based redirect
+              window.location.href = data.redirect_url || redirect_url;
             });
           } else {
-            Swal.fire('Error', data.error, 'error');
+            Swal.fire('Error', data.message || data.error || 'Unexpected response format', 'error');
           }
         })
         .catch(error => {
-          console.error('Error:', error);
-          Swal.fire('Error', 'An error occurred during login', 'error');
+          console.error('Login Error:', error);
+          Swal.fire({
+            icon: 'error',
+            title: 'Login Error', 
+            text: 'An error occurred during login. Please check your connection and try again.',
+            footer: window.location.hostname !== 'localhost' ? 
+              '<small>If this persists, contact system administrator</small>' : ''
+          });
         });
       });
     });
